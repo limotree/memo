@@ -43,6 +43,111 @@ jstack 20485 | grep 5047 -A 10    (-A：往后多少行)
 
 jstat -gcutil 进程ID
  
+ 
+ 问题
+1、无限循环的while会导致CPU使用率飙升吗？
+2、经常使用Young GC会导致CPU占用率飙升吗？
+3、具有大量线程的应用程序的CPU使用率是否较高？
+4、CPU使用率高的应用程序的线程数是多少？
+5、处于BLOCKED状态的线程会导致CPU使用率飙升吗？
+6、分时操作系统中的CPU是消耗 us还是 sy？
+
+思路
+1.如何计算CPU使用率？
+CPU％= 1 - idleTime / sysTime * 100
+
+idleTime：CPU空闲的时间
+
+sysTime：CPU处于用户模式和内核模式的时间总和
+
+2.与CPU使用率有关的是什么？
+人们常说，计算密集型程序的CPU密集程度更高。
+
+那么，JAVA应用程序中的哪些操作更加CPU密集？
+
+以下列出了常见的CPU密集型操作：
+
+1、频繁的GC; 如果访问量很高，可能会导致频繁的GC甚至FGC。当调用量很大时，内存分配将如此之快以至于GC线程将连续执行，这将导致CPU飙升。
+2、序列化和反序列化。稍后将给出一个示例：当程序执行xml解析时，调用量会增加，从而导致CPU变满。
+3、序列化和反序列化;
+4、正则表达式。我遇到了正则表达式使CPU充满的情况; 原因可能是Java正则表达式使用的引擎实现是NFA自动机，它将在字符匹配期间执行回溯。
+5、线程上下文切换; 有许多已启动的线程，这些线程的状态在Blocked（锁定等待，IO等待等）和Running之间发生变化。当锁争用激烈时，这种情况很容易发生。
+6、有些线程正在执行非阻塞操作，例如 while(true)语句。如果在程序中计算需要很长时间，则可以使线程休眠。
+
+3、CPU是否与进程和线程相关？
+现在，分时操作系统使用循环方式为进程调度分配时间片。如果进程正在等待或阻塞，那么它将不会使用CPU资源。线程称为轻量级进程，并共享进程资源。因此，线程调度在CPU中也是分时的。但在Java中，我们使用JVM进行线程调度。因此，通常，线程调度有两种模式：时间共享调度和抢占式调度。
+
+答案
+1、while的无限循环会导致CPU使用率飙升吗？
+是。
+
+首先，无限循环将调用CPU寄存器进行计数，此操作将占用CPU资源。那么，如果线程始终处于无限循环状态，CPU是否会切换线程？
+
+除非操作系统时间片到期，否则无限循环不会放弃占用的CPU资源，并且无限循环将继续向系统请求时间片，直到系统没有空闲时间来执行任何其他操作。整编：微信公众号，搜云库技术团队，ID：souyunku
+
+stackoverflow中也提出了这个问题：为什么无意的无限循环增加了CPU的使用？
+
+https://stackoverflow.com/questions/2846165/why-does-an-infinite-loop-of-the-unintended-kind-increase-the-cpu-use
+
+2、频繁的Young GC会导致CPU占用率飙升吗？
+是。
+
+Young GC本身就是JVM用于垃圾收集的操作，它需要计算内存和调用寄存器。因此，频繁的Young GC必须占用CPU资源。
+
+让我们来看一个现实世界的案例。for循环从数据库中查询数据集合，然后再次封装新的数据集合。如果内存不足以存储，JVM将回收不再使用的数据。因此，如果所需的存储空间很大，您可能会收到CPU使用率警报。
+
+3、具有大量线程的应用程序的CPU使用率是否较高？
+不时。
+
+如果通过jstack检查系统线程状态时线程总数很大，但处于Runnable和Running状态的线程数不多，则CPU使用率不一定很高。
+
+我遇到过这样一种情况：系统线程的数量是1000+，其中超过900个线程处于BLOCKED和WAITING状态。该线程占用很少的CPU。
+
+但是大多数情况下，如果线程数很大，那么常见的原因是大量线程处于BLOCKED和WAITING状态。
+
+4、对于CPU占用率高的应用程序，线程数是否较大？
+不是。
+
+高CPU使用率的关键因素是计算密集型操作。如果一个线程中有大量计算，则CPU使用率也可能很高。这也是数据脚本任务需要在大规模集群上运行的原因。
+
+5、处于BLOCKED状态的线程是否会导致CPU占用率飙升？
+不会。
+
+CPU使用率的飙升更多是由于上下文切换或过多的可运行状态线程。处于阻塞状态的线程不一定会导致CPU使用率上升。
+
+6、如果分时操作系统中CPU的值 us或 sy值很高，这意味着什么？
+您可以使用命令查找CPU的值 us和 sy值 top，如以下示例所示：
+
+
+us：用户空间占用CPU的百分比。简单来说，高我们是由程序引起的。通过分析线程堆栈很容易找到有问题的线程。整编：微信公众号，搜云库技术团队，ID：souyunku
+
+sy：内核空间占用CPU的百分比。当sy为高时，如果它是由程序引起的，那么它基本上是由于线程上下文切换。
+
+经验
+如何找出CPU使用率高的原因？下面简要描述分析过程。
+
+如果发现应用程序服务器的CPU使用率很高，请首先检查线程数，JVM，系统负载等参数，然后使用这些参数来证明问题的原因。其次，使用jstack打印堆栈信息并使用工具分析线程使用情况（建议使用fastThread，一个在线线程分析工具）。
+
+以下是一个真实案例：
+
+一天晚上，我突然收到一条消息，说CPU使用率达到了100％。然后我用jstack导出了线程栈信息。
+
+
+进一步检查日志：
+
+onsumer_ODC_L_nn_jmq919_1543834242875 - priority:10- threadid:0x00007fbf7011e000- nativeid:0x2f093- state:RUNNABLE
+stackTrace:
+java.lang.Thread.State:RUNNABLE
+at java.lang.Object.hashCode(NativeMethod)
+at java.util.HashMap.hash(HashMap.java:362)
+at java.util.HashMap.getEntry(HashMap.java:462)
+at java.util.HashMap.containsKey(HashMap.java:449)
+at com.project.order.odc.util.XmlSerializableTool.deSerializeXML(XMLSerializableTool.java:100)
+at com.project.plugin.service.message.resolver.impl.OrderFinishMessageResolver.parseMessage(OrderFinishMessageResolver.java:55)
+at com.project.plugin.service.message.resolver.impl.OrderFinishMessageResolver.parseMessage(OrderFinishMessageResolver.java:21)
+at com.project.plugin.service.message.resolver.impl.AbstractResolver.resolve(AbstractResolver.java:28)
+at com.project.plugin.service.jmq.AbstractListener.onMessage(AbstractListener.java:44)
+现在通过这个日志找到了问题：用于反序列化MQ消息实体的方法导致CPU使用率飙升。
 
 
 ---------------------------------------linux下如何定位代码问题-------------------------------
