@@ -15,6 +15,34 @@ java应用cpu过高基本上是因为
 ## 工具
  show-busy-java-threads.sh
  
+ 生成dump文件
+①，top出异常进程
+②，生成异常进程的dump文件
+jmap -dump:format=b,file=[文件名] [进程]
+jmap -dump:format=b,file=heap.dump 2576
+jmap -dump:format=b,file=heap.hprof 2576
+③，使用jvisualvm分析dump文件
+
+查找异常线程
+
+wget --no-check-certificate https://raw.github.com/oldratlee/useful-scripts/release/show-busy-java-threads
+
+chmod +x show-busy-java-threads 
+
+使用jstack
+
+top 记录进程ID: 20485
+
+Shift + h  记录线程ID: 20551
+
+printf %x  20551     记录线程十六进制: 5047
+
+jstack 20485 | grep 5047 -A 10    (-A：往后多少行)
+
+进程内存状态
+
+jstat -gcutil 进程ID
+ 
 
 
 ---------------------------------------linux下如何定位代码问题-------------------------------
